@@ -1,139 +1,16 @@
-# Neural Network from numpy
-import numpy
-import numpy as np
+import autograd.numpy as np
+from numpy.random import default_rng
 from sklearn import datasets as ds
-from tqdm import tqdm
+from autograd import grad
+
 
 # TODO add docstrings
+# TODO add type suggestions
+# TODO Clean this up
 
-def v_relu(v):  # activation function
-    def relu(x):
-        return 0 if x <= 0 else x
-
-    return np.vectorize(relu)(v)
-
-
-def dv_relu(v):  # derivative of v_relu
-    def d_relu(x):
-        return 0 if x <= 0 else 1
-
-    return np.vectorize(d_relu)(v)
-
-
-def weigh_and_bias(input_vector, weights, bias):
-    weighted = np.matmul(input_vector, weights)
-    return weighted + bias
-
-
-def softmax(v):
-    shift_to_avoid_instability = v - np.max(v)
-    return np.exp(shift_to_avoid_instability) / np.sum(np.exp(shift_to_avoid_instability), axis=0)
-    # Derivative if differentiating w/ respect to numerator is softmax(ith element)(1-softmax(ith elem)
-    # Derivative if differentiating w/ respect to some other element, not the numerator, is -softmax(jth (diff wrt j)) * softmax(ith (numerator))
-
-
-def cross_entropy(probabilities, labels):  # from softmax
-    loss = -np.sum(labels * np.log(probabilities), axis=0)
-    correct = 1 if np.argmax(probabilities) == np.argmax(labels) else 0
-    return loss, correct
-    # derivative wrt jth input is softmax(jth) - jth label
-
-    # Not general solution, this code is specific to my layers
-    # derivative of last layer is d(cost)/dSoftmax dSoftmax/dweights
-    # Derivative of bias is d(c0st)/dSoftmax dSoftmax/dBias
-
-
-def get_collapsed_kronecker(input_vector, size):
-    return np.array([input_vector for i in range(size)]).reshape((size, size))
-
-
-def forward_pass(layers, input):
-    curr_vector = input
-    input_vector_moments = [input]
-    for i in range(len(layers) - 1):  # runs through all layers except the last which requires a different command
-        weights, bias = layers[i] # made change 1 -> i
-        w_sum_vector = weigh_and_bias(curr_vector, weights, bias)  # Weigh features and add bias
-        input_vector_moments.append(w_sum_vector)
-        activated_sum_vector = v_relu(w_sum_vector)
-        curr_vector = activated_sum_vector
-
-    final_sum_vector = weigh_and_bias(curr_vector, layers[-1][0], layers[-1][1])
-    input_vector_moments.append(final_sum_vector)
-    probabilities = softmax(final_sum_vector)
-
-    return input_vector_moments, probabilities
-
-
-def backpropagate(layers, sums, probabilities, labels):
-    weight_derivatives = []
-    bias_derivatives = []
-    xent_and_smax_partial = np.array(probabilities - labels).transpose()
-    for i in range(len(layers)):
-        weight_partial = xent_and_smax_partial  # activation function and cost
-        d_wrt_weights = get_collapsed_kronecker(sums[-1], len(weight_partial))
-        weight_partial = np.matmul(d_wrt_weights, weight_partial)
-        # size here is the # of rows of previous partial matrix
-
-        bias_partial = xent_and_smax_partial
-
-        for j in range(0, i+1):  # shift i values by 1 because we are negative indexing w/ j (no -0)
-            if j != 0:
-                weight_partial = np.matmul(layers[-j][0], weight_partial)
-                weight_partial = dv_relu(weight_partial)
-                d_wrt_weights = get_collapsed_kronecker(sums[-j-1], len(weight_partial))
-                weight_partial = np.matmul(d_wrt_weights, weight_partial)
-
-                bias_partial = np.matmul(layers[-j][0], bias_partial)  # weights of previous layer
-                bias_partial = dv_relu(bias_partial)
-
-        weight_derivatives.append(weight_partial)
-        bias_derivatives.append(bias_partial)
-
-    return weight_derivatives, bias_derivatives
-
-
-def update_weights_and_biases(layers, weight_gradient, bias_gradient, step_size):
-    new_layers = []
-    for i in range(len(layers)):
-        weights, bias = layers[i]
-        weights = weights - (step_size * weight_gradient[-(i + 1)])
-        bias = bias - (step_size * bias_gradient[-(i + 1)])
-        new_layers.append((weights, bias))
-
-    return new_layers
-
-
-def average_gradients(gradients):
-    w_grad, b_grad = gradients
-    return np.mean(w_grad, axis=0), np.mean(b_grad, axis=0)
-
-
-def train_loop(layers, input_vectors, labels, step_size, batch_size, epochs):  # TODO add loss tracker
-    self_layers = layers
-    w_grads = []
-    b_grads = []
-    for i in tqdm(range(epochs)):
-        if len(w_grads) == batch_size:
-            avg_w_grad, avg_b_grad = average_gradients((w_grads, b_grads))
-            self_layers = update_weights_and_biases(self_layers, avg_w_grad, avg_b_grad,
-                                                    step_size)
-            w_grads = []
-            b_grads = []
-        sums, output, = forward_pass(self_layers, input_vectors[i])
-        w_grad, b_grad = backpropagate(self_layers, sums, output, labels[i])
-        w_grads.append(w_grad)
-        b_grads.append(b_grad)
-
-    if len(w_grads) != 0:
-        avg_w_grad, avg_b_grad = average_gradients((w_grads, b_grads)) # one last one for the road if
-        self_layers = update_weights_and_biases(self_layers, avg_w_grad, avg_b_grad,
-                                                step_size)
-
-    return self_layers
-
-
-def one_hot_encode(labels, num_labels):  # NOTE U NEED TO TELL IT HOW MANY LABELS
+def one_hot_encode(labels):
     new_labels = []
+    num_labels = len(np.unique(labels))
     for label in labels:
         zero_array = np.zeros(num_labels)
         zero_array[label] = 1
@@ -142,68 +19,121 @@ def one_hot_encode(labels, num_labels):  # NOTE U NEED TO TELL IT HOW MANY LABEL
     return new_labels
 
 
-def randomize_input(features, labels):
-    rng = np.random.default_rng()
+def randomize_input(features, labels, random):
+    rng = random
     indices = np.arange(len(features))
     rng.shuffle(indices)
 
     return features[indices], labels[indices]
 
 
-def test(layers, input, labels):
-    assert len(input) == len(labels)
-    loss_history = []
-    accuracy = 0.0
-    for i in tqdm(range(len(input))):
-        _, probabilities = forward_pass(layers, input)
-        loss, truth_value = cross_entropy(probabilities, labels)
-        loss_history.append(loss)
-        accuracy = accuracy + (truth_value - accuracy)/i
-
-    return loss_history, accuracy
+def v_relu(v):  # activation function
+    new_array = []
+    for i in range(len(v)):
+        t = [0.0] if v[i] <= 0 else v[i]
+        new_array.append(t)
+    return np.array(new_array, ndmin=1)
 
 
-# get inputs
-iris_X, iris_y = ds.load_iris(return_X_y=True)
-shuffled_X, shuffled_y = randomize_input(iris_X, iris_y)
-train_split = round(0.8 * shuffled_X.shape[0])
-train_inputs = shuffled_X[0:train_split]
-train_targets = shuffled_y[0:train_split]
-
-test_inputs = shuffled_X[train_split:]
-test_targets = shuffled_y[train_split:]
-
-train_targets_enc = one_hot_encode(train_targets, 3)
-test_targets_enc = one_hot_encode(test_targets,3)
-
-# let's try 4 layers of size 16
-layer1_w = numpy.ones((4, 16))
-layer1_b = numpy.zeros((1, 16))
-
-layer2_w = numpy.ones((16, 16))
-layer2_b = numpy.zeros((1, 16))
-
-layer3_w = numpy.ones((16, 16))
-layer3_b = numpy.zeros((1, 16))
-
-layer4_w = numpy.ones((16, 16))
-layer4_b = numpy.zeros((1, 16))
-
-output_layer_w = numpy.ones((16, 3 ))
-output_layer_b = numpy.zeros((1, 3))
-
-initial_layers = [(layer1_w, layer1_b), (layer2_w, layer2_b), (layer3_w, layer3_b), (layer4_w, layer4_b),
-                  (output_layer_w, output_layer_b)]
-# train
-trained_layers = train_loop(initial_layers, train_inputs, train_targets_enc, 0.1, 5, 10)
-
-# test
-
-loss, accuracy = test(trained_layers, test_inputs, test_targets_enc)
-
-print(accuracy)
+def accuracy(layers, iv, label):
+    guess = softmax(forward_pass(layers, iv))
+    loss = cross_entropy(layers, guess, label, grad=False)
+    return loss, np.mean(np.argmax(label) == np.argmax(guess))
 
 
+def softmax(v):
+    z = v - np.max(v)
+    num = np.exp(z)
+    denom = np.sum(num)
+    return num / denom
 
-# test
 
+def cross_entropy(layers, input, labels, grad=False):  # from softmax
+    if grad:
+        probs = forward_pass(layers, input)
+        loss = -np.sum(labels * np.log(probs))
+    else:
+        loss = -np.sum(labels * np.log(input))
+    return loss
+
+
+def update_weights_and_biases(params, grad, step):
+    for i in range(len(params)):
+        w, b = params[i]
+        w_grad, b_grad = grad[i]
+        w -= step * w_grad
+        b -= step * b_grad
+
+
+def forward_pass(params, input_v):  # make sure everything is correct shape already
+    curr_vector = input_v
+    for w, b in params:
+        weighted_sum = w @ curr_vector + b
+        curr_vector = v_relu(weighted_sum)
+
+    probs = softmax(weighted_sum)
+    return probs
+
+
+if __name__ == "__main__":
+
+    # Create numpy random number generator
+    rng = default_rng(1337)
+
+    # Load data
+    iris_X, iris_y = ds.load_iris(return_X_y=True)
+    # Randomly shuffle data
+    shuffled_X, shuffled_y = randomize_input(iris_X, iris_y, rng)
+    # Split data into train and test sets
+    train_split = round(0.8 * shuffled_X.shape[0])
+    train_inputs = shuffled_X[0:train_split].reshape(120, 4, 1)
+    train_targets = shuffled_y[0:train_split]
+
+    test_inputs = shuffled_X[train_split:].reshape(30, 4, 1)
+    test_targets = shuffled_y[train_split:]
+    # One hot encode targets e.g. [1,0,0]
+    train_targets_enc = np.array(one_hot_encode(train_targets)).reshape(120, 3, 1)
+    test_targets_enc = np.array(one_hot_encode(test_targets)).reshape(30, 3, 1)
+
+    def initialize_layers(num_hlayers, num_weights, input_size, output_size):  # TODO add batches
+        # Input layer with special size requirements: num_weights x input_size
+        layers = [(rng.normal(0, 2/input_size, (num_weights, input_size)), rng.standard_normal((num_weights, 1)))]
+        # Hidden layers all share same size
+        for i in range(num_hlayers - 2):
+            layers.append((rng.normal(0, 2/num_weights, (num_weights, num_weights)), rng.standard_normal((num_weights, 1))))
+        # Output layer has special size requirement: output_size x num_weights
+        layers.append((rng.normal(0, 2/num_weights, (output_size, num_weights)), rng.standard_normal((output_size, 1))))
+        return layers
+
+    # initialize layers from above
+    params = initialize_layers(num_hlayers=5, num_weights=10, input_size=4, output_size=3)
+
+    # create gradient function with autograd by passing in cost function
+    pass_grad = grad(cross_entropy)
+
+    def train_loop(gradient_func, layers, input_vectors, labels, epochs, step_size):
+
+        for j in range(epochs):
+            epoch_loss = 0.0
+            epoch_accr = 0.0
+            for i in range(len(input_vectors)):
+                gradient = gradient_func(layers, input_vectors[i], labels[i], grad=True)
+                update_weights_and_biases(layers, gradient, step_size)
+                train_loss, train_acc = accuracy(layers, input_vectors[i], labels[i])
+                epoch_loss += (train_loss - epoch_loss) / (i + 1)
+                epoch_accr += (train_acc - epoch_accr) / (i + 1)
+            print("Epoch {epoch}, train loss: {l}  train acc: {a}".format(epoch=j, l=epoch_loss, a=epoch_accr))
+
+
+    train_loop(pass_grad, params, train_inputs, train_targets_enc, 10, 0.01)
+
+    def test_loop(layers, input, labels):
+        m_loss = 0.0
+        m_acc = 0.0
+        for i in range(len(input)):
+            test_loss, test_acc = accuracy(layers, input[i], labels[i])
+            m_loss += (test_loss - m_loss) / (i + 1)
+            m_acc += (test_acc - m_acc) / (i + 1)
+        print("Validation loss: {l}, val acc: {a}".format(l=m_loss, a=m_acc))
+
+    test_loop(params, test_inputs, test_targets_enc)
